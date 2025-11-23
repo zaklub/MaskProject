@@ -110,9 +110,63 @@ def segment_truck_sam2(image_rgb, bbox, sam2_model_path='sam2_hiera_large.pt', s
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
+    # Verify config file exists
+    config_path = Path(sam2_config_path)
+    if not config_path.exists():
+        # Try to find config in SAM-2 installation
+        import sam2
+        sam2_path = Path(sam2.__file__).parent
+        alt_config_paths = [
+            sam2_path / 'sam2_hiera_l.yaml',
+            sam2_path / 'configs' / 'sam2' / 'sam2_hiera_l.yaml',
+            sam2_path / 'configs' / 'sam2.1' / 'sam2.1_hiera_l.yaml',
+        ]
+        for alt_path in alt_config_paths:
+            if alt_path.exists():
+                sam2_config_path = str(alt_path)
+                print(f"Using config file from SAM-2 installation: {sam2_config_path}")
+                break
+        else:
+            raise FileNotFoundError(
+                f"SAM-2 config file not found: {sam2_config_path}\n"
+                f"Please ensure sam2_hiera_l.yaml exists in the current directory or SAM-2 installation."
+            )
+    else:
+        sam2_config_path = str(config_path.absolute())
+    
+    # Verify model file exists
+    model_path = Path(sam2_model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"SAM-2 model file not found: {sam2_model_path}\n"
+            f"Please download it using: python download_sam2_models.py"
+        )
+    sam2_model_path = str(model_path.absolute())
+    
     # Load SAM-2 model
     print(f"Loading SAM-2 model on {device.upper()}...")
-    sam2_model = build_sam2(sam2_config_path, sam2_model_path, device=device)
+    print(f"Config: {sam2_config_path}")
+    print(f"Model: {sam2_model_path}")
+    
+    try:
+        sam2_model = build_sam2(sam2_config_path, sam2_model_path, device=device)
+    except Exception as e:
+        # Try alternative: pass config as string path without absolute
+        print(f"First attempt failed, trying alternative method...")
+        try:
+            sam2_model = build_sam2(str(config_path), str(model_path), device=device)
+        except Exception as e2:
+            raise RuntimeError(
+                f"Failed to load SAM-2 model.\n"
+                f"Error 1: {str(e)}\n"
+                f"Error 2: {str(e2)}\n"
+                f"Please check:\n"
+                f"  1. Config file exists: {sam2_config_path}\n"
+                f"  2. Model file exists: {sam2_model_path}\n"
+                f"  3. SAM-2 is properly installed\n"
+                f"  4. File paths are correct"
+            ) from e2
+    
     predictor = SAM2ImagePredictor(sam2_model)
     
     # Set image for predictor
