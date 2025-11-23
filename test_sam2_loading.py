@@ -75,32 +75,68 @@ def test_sam2_loading():
         print("  Please download using: python download_sam2_models.py")
         return 1
     
+    # List all available config files in SAM-2 installation
+    print("\n[3.5] Checking for other config files in SAM-2 installation...")
+    try:
+        import sam2
+        sam2_path = Path(sam2.__file__).parent
+        print(f"SAM-2 installation path: {sam2_path}")
+        
+        # Look for all YAML files
+        config_dirs = [
+            sam2_path,
+            sam2_path / 'configs',
+            sam2_path / 'configs' / 'sam2',
+            sam2_path / 'configs' / 'sam2.1',
+        ]
+        
+        yaml_files = []
+        for config_dir in config_dirs:
+            if config_dir.exists():
+                for yaml_file in config_dir.glob("*.yaml"):
+                    yaml_files.append(yaml_file)
+        
+        if yaml_files:
+            print("Found YAML config files:")
+            for yf in yaml_files[:10]:  # Show first 10
+                print(f"  - {yf}")
+        else:
+            print("  No YAML files found in expected locations")
+    except Exception as e:
+        print(f"  Could not check SAM-2 installation: {e}")
+    
     # Try loading model
     print("\n[4] Attempting to load SAM-2 model...")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
-    try:
-        print(f"Config path: {config_found}")
-        print(f"Model path: {model_found}")
-        
-        # Try with absolute paths
-        model = build_sam2(config_found, model_found, device=device)
-        print("✓ Model loaded successfully!")
-        
-        # Test predictor
-        print("\n[5] Testing predictor...")
-        predictor = SAM2ImagePredictor(model)
-        print("✓ Predictor created successfully!")
-        
-        print("\n" + "=" * 60)
-        print("✓ All tests passed! SAM-2 is working correctly.")
-        print("=" * 60)
-        return 0
-        
-    except Exception as e:
-        print(f"\n✗ Failed to load model: {e}")
-        print(f"\nError type: {type(e).__name__}")
+    print(f"\nConfig path: {config_found}")
+    print(f"Model path: {model_found}")
+    
+    # Try different methods
+    methods_to_try = [
+        ("Absolute paths", lambda: build_sam2(config_found, model_found, device=device)),
+        ("Relative config path", lambda: build_sam2(str(Path(config_found).relative_to(Path.cwd())), model_found, device=device)),
+        ("String paths (no absolute)", lambda: build_sam2(str(Path(config_found)), str(Path(model_found)), device=device)),
+    ]
+    
+    model = None
+    last_error = None
+    
+    for method_name, method_func in methods_to_try:
+        print(f"\nTrying method: {method_name}...")
+        try:
+            model = method_func()
+            print(f"✓ Success with method: {method_name}")
+            break
+        except Exception as e:
+            print(f"✗ Failed: {str(e)[:100]}...")
+            last_error = e
+            continue
+    
+    if model is None:
+        print(f"\n✗ All methods failed. Last error:")
+        print(f"Error type: {type(last_error).__name__}")
         import traceback
         print("\nFull traceback:")
         traceback.print_exc()
@@ -108,14 +144,33 @@ def test_sam2_loading():
         print("\n" + "=" * 60)
         print("Troubleshooting suggestions:")
         print("=" * 60)
-        print("1. Verify SAM-2 installation:")
-        print("   pip install git+https://github.com/facebookresearch/segment-anything-2.git")
-        print("\n2. Check config file format (should be YAML)")
-        print("\n3. Verify model file is complete (should be ~1-2 GB)")
-        print("\n4. Try reinstalling SAM-2:")
-        print("   pip uninstall sam2")
-        print("   pip install git+https://github.com/facebookresearch/segment-anything-2.git")
+        print("1. Check if config file is valid YAML:")
+        print(f"   python -c \"import yaml; yaml.safe_load(open('{config_found}'))\"")
+        print("\n2. Verify model file is not corrupted:")
+        print(f"   Check file size: {Path(model_found).stat().st_size / (1024**2):.1f} MB")
+        print("\n3. Try using config from SAM-2 installation directly")
+        print("\n4. Check SAM-2 version compatibility")
         return 1
+    
+    # Test predictor
+    print("\n[5] Testing predictor...")
+    try:
+        predictor = SAM2ImagePredictor(model)
+        print("✓ Predictor created successfully!")
+    except Exception as e:
+        print(f"✗ Failed to create predictor: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+    
+    print("\n" + "=" * 60)
+    print("✓ All tests passed! SAM-2 is working correctly.")
+    print("=" * 60)
+    print(f"\nWorking configuration:")
+    print(f"  Config: {config_found}")
+    print(f"  Model: {model_found}")
+    print(f"  Device: {device}")
+    return 0
 
 if __name__ == '__main__':
     sys.exit(test_sam2_loading())

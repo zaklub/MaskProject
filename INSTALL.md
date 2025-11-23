@@ -46,24 +46,42 @@ pip install Pillow
 
 **Important**: SAM-2 installation can be more complex. Choose one of the following methods:
 
-#### Option A: Install from GitHub (Recommended)
+#### Option A: Install from GitHub (Recommended - if git is available)
 ```bash
 pip install git+https://github.com/facebookresearch/segment-anything-2.git
 ```
 
-#### Option B: Clone and Install
+#### Option B: Manual Installation from ZIP (If git clone doesn't work)
+1. Download ZIP from: https://github.com/facebookresearch/segment-anything-2
+   - Click "Code" → "Download ZIP"
+2. Extract the ZIP file
+3. Install:
+```bash
+cd segment-anything-2-main  # or the extracted folder name
+pip install -e .
+```
+
+**Or use the helper script:**
+```bash
+# After downloading the ZIP file:
+python install_sam2_manual.py segment-anything-2-main.zip
+```
+
+#### Option C: Clone and Install (if git is available)
 ```bash
 git clone https://github.com/facebookresearch/segment-anything-2.git
 cd segment-anything-2
 pip install -e .
 ```
 
-#### Option C: Install via pip (if available)
+#### Option D: Install via pip (if available)
 ```bash
 pip install sam2
 ```
 
-**Note**: After installing SAM-2, you'll need to download the model files (see below).
+**Note**: 
+- If you cannot use git, see [INSTALL_SAM2_MANUAL.md](INSTALL_SAM2_MANUAL.md) for detailed manual installation instructions
+- After installing SAM-2, you'll need to download the model files (see below)
 
 ## Model Files Required
 
