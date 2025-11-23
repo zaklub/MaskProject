@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Model files (too large for git, download separately)
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+*.onnx
+
+# Output images (generated files)
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+!sam2_hiera_l.yaml  # Keep config file
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+

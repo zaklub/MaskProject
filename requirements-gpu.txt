@@ -1,0 +1,26 @@
+# GPU-enabled dependencies for truck_mask_cleaner.py
+# For NVIDIA GPUs with CUDA support
+
+# Deep learning frameworks (CUDA-enabled)
+# Install PyTorch with CUDA support
+# For CUDA 11.8 (recommended for Quadro P1000):
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# For CUDA 12.1:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Object detection
+ultralytics>=8.0.0
+
+# Segmentation
+# Note: SAM-2 installation may require additional setup
+# Check: https://github.com/facebookresearch/segment-anything-2
+# You may need to install from source or use: pip install git+https://github.com/facebookresearch/segment-anything-2.git
+
+# Image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=9.5.0
+
+# Optional but recommended
+matplotlib>=3.7.0  # For visualization/debugging if needed
+
