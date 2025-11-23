@@ -110,29 +110,47 @@ def segment_truck_sam2(image_rgb, bbox, sam2_model_path='sam2_hiera_large.pt', s
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    # Verify config file exists
+    # Verify config file exists and find the best one
     config_path = Path(sam2_config_path)
-    if not config_path.exists():
-        # Try to find config in SAM-2 installation
-        import sam2
-        sam2_path = Path(sam2.__file__).parent
-        alt_config_paths = [
-            sam2_path / 'sam2_hiera_l.yaml',
-            sam2_path / 'configs' / 'sam2' / 'sam2_hiera_l.yaml',
-            sam2_path / 'configs' / 'sam2.1' / 'sam2.1_hiera_l.yaml',
-        ]
+    
+    # Always try to find config in SAM-2 installation (prefer configs/ subdirectory)
+    import sam2
+    sam2_path = Path(sam2.__file__).parent
+    alt_config_paths = [
+        sam2_path / 'configs' / 'sam2' / 'sam2_hiera_l.yaml',  # Preferred: from configs subdirectory
+        sam2_path / 'configs' / 'sam2.1' / 'sam2.1_hiera_l.yaml',  # Alternative version
+        sam2_path / 'sam2_hiera_l.yaml',  # Fallback: from root
+    ]
+    
+    # If provided config doesn't exist, or if we want to prefer the one from configs/
+    if not config_path.exists() or not config_path.is_absolute():
         for alt_path in alt_config_paths:
             if alt_path.exists():
                 sam2_config_path = str(alt_path)
                 print(f"Using config file from SAM-2 installation: {sam2_config_path}")
                 break
         else:
-            raise FileNotFoundError(
-                f"SAM-2 config file not found: {sam2_config_path}\n"
-                f"Please ensure sam2_hiera_l.yaml exists in the current directory or SAM-2 installation."
-            )
+            # Last resort: use provided path if it exists
+            if config_path.exists():
+                sam2_config_path = str(config_path.absolute())
+            else:
+                raise FileNotFoundError(
+                    f"SAM-2 config file not found: {sam2_config_path}\n"
+                    f"Searched in:\n" + "\n".join([f"  - {p}" for p in alt_config_paths])
+                )
     else:
-        sam2_config_path = str(config_path.absolute())
+        # Use provided config, but verify it exists
+        if not config_path.exists():
+            # Try alternatives
+            for alt_path in alt_config_paths:
+                if alt_path.exists():
+                    sam2_config_path = str(alt_path)
+                    print(f"Provided config not found, using: {sam2_config_path}")
+                    break
+            else:
+                raise FileNotFoundError(f"SAM-2 config file not found: {sam2_config_path}")
+        else:
+            sam2_config_path = str(config_path.absolute())
     
     # Verify model file exists
     model_path = Path(sam2_model_path)
@@ -148,24 +166,48 @@ def segment_truck_sam2(image_rgb, bbox, sam2_model_path='sam2_hiera_large.pt', s
     print(f"Config: {sam2_config_path}")
     print(f"Model: {sam2_model_path}")
     
+    # Try loading with different config paths if first attempt fails
+    configs_to_try = [sam2_config_path]
+    
+    # Add alternative config paths from SAM-2 installation
     try:
-        sam2_model = build_sam2(sam2_config_path, sam2_model_path, device=device)
-    except Exception as e:
-        # Try alternative: pass config as string path without absolute
-        print(f"First attempt failed, trying alternative method...")
+        import sam2
+        sam2_path = Path(sam2.__file__).parent
+        alt_configs = [
+            sam2_path / 'configs' / 'sam2' / 'sam2_hiera_l.yaml',
+            sam2_path / 'configs' / 'sam2.1' / 'sam2.1_hiera_l.yaml',
+        ]
+        for alt_cfg in alt_configs:
+            if alt_cfg.exists() and str(alt_cfg) not in configs_to_try:
+                configs_to_try.append(str(alt_cfg))
+    except:
+        pass
+    
+    sam2_model = None
+    last_error = None
+    
+    for cfg_to_try in configs_to_try:
         try:
-            sam2_model = build_sam2(str(config_path), str(model_path), device=device)
-        except Exception as e2:
-            raise RuntimeError(
-                f"Failed to load SAM-2 model.\n"
-                f"Error 1: {str(e)}\n"
-                f"Error 2: {str(e2)}\n"
-                f"Please check:\n"
-                f"  1. Config file exists: {sam2_config_path}\n"
-                f"  2. Model file exists: {sam2_model_path}\n"
-                f"  3. SAM-2 is properly installed\n"
-                f"  4. File paths are correct"
-            ) from e2
+            print(f"Trying config: {cfg_to_try}")
+            sam2_model = build_sam2(cfg_to_try, sam2_model_path, device=device)
+            print(f"✓ Successfully loaded with config: {cfg_to_try}")
+            break
+        except Exception as e:
+            last_error = e
+            print(f"✗ Failed with config {Path(cfg_to_try).name}: {str(e)[:100]}...")
+            continue
+    
+    if sam2_model is None:
+        raise RuntimeError(
+            f"Failed to load SAM-2 model with all attempted config files.\n"
+            f"Last error: {str(last_error)}\n"
+            f"Tried configs:\n" + "\n".join([f"  - {c}" for c in configs_to_try]) + "\n"
+            f"Model path: {sam2_model_path}\n"
+            f"Please check:\n"
+            f"  1. Config files exist and are valid YAML\n"
+            f"  2. Model file exists and is not corrupted\n"
+            f"  3. SAM-2 version is compatible"
+        )
     
     predictor = SAM2ImagePredictor(sam2_model)
     

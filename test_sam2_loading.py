@@ -113,12 +113,39 @@ def test_sam2_loading():
     print(f"\nConfig path: {config_found}")
     print(f"Model path: {model_found}")
     
-    # Try different methods
-    methods_to_try = [
-        ("Absolute paths", lambda: build_sam2(config_found, model_found, device=device)),
-        ("Relative config path", lambda: build_sam2(str(Path(config_found).relative_to(Path.cwd())), model_found, device=device)),
-        ("String paths (no absolute)", lambda: build_sam2(str(Path(config_found)), str(Path(model_found)), device=device)),
-    ]
+    # Try different config files and methods
+    # Prefer configs from configs/sam2/ subdirectory
+    preferred_configs = []
+    try:
+        import sam2
+        sam2_path = Path(sam2.__file__).parent
+        # Try configs from configs/sam2/ first (these are usually the correct ones)
+        preferred_configs = [
+            sam2_path / 'configs' / 'sam2' / 'sam2_hiera_l.yaml',
+            sam2_path / 'configs' / 'sam2.1' / 'sam2.1_hiera_l.yaml',
+            sam2_path / 'sam2_hiera_l.yaml',  # Fallback to root
+        ]
+    except:
+        pass
+    
+    # Build list of configs to try (preferred first, then found one)
+    configs_to_try = []
+    for pref_config in preferred_configs:
+        if pref_config.exists() and str(pref_config) != config_found:
+            configs_to_try.append(str(pref_config.absolute()))
+    if config_found not in configs_to_try:
+        configs_to_try.append(config_found)
+    
+    # Try different methods with different config files
+    methods_to_try = []
+    for cfg_path in configs_to_try:
+        methods_to_try.extend([
+            (f"Config: {Path(cfg_path).name} (absolute)", lambda c=cfg_path: build_sam2(c, model_found, device=device)),
+            (f"Config: {Path(cfg_path).name} (relative to cwd)", lambda c=cfg_path: build_sam2(str(Path(c).relative_to(Path.cwd())), model_found, device=device) if Path(c).is_relative_to(Path.cwd()) else None),
+        ])
+    
+    # Remove None methods
+    methods_to_try = [(name, func) for name, func in methods_to_try if func is not None]
     
     model = None
     last_error = None
