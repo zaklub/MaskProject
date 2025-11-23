@@ -230,14 +230,105 @@ def segment_truck_sam2(image_rgb, bbox, sam2_model_path='sam2_hiera_large.pt', s
         print(f"SAM-2 mask score: {scores[0]:.3f}")
     
     # Convert to uint8 binary mask (0 or 255)
-    mask_uint8 = (mask.astype(np.uint8) * 255)
+    # SAM-2 returns boolean mask: True = object (truck), False = background
+    # Convert: True -> 255 (white/truck), False -> 0 (black/background)
+    if mask.dtype == bool:
+        mask_uint8 = mask.astype(np.uint8) * 255
+    else:
+        # If already numeric, ensure it's 0 or 255
+        mask_uint8 = (mask > 0.5).astype(np.uint8) * 255
     
     return mask_uint8
 
 
+def remove_vertical_streaks_fft(image_gray):
+    """
+    Remove vertical streaks using FFT.
+    Zeroes out vertical line frequencies in frequency domain.
+    Vertical streaks in spatial domain appear as horizontal lines in frequency domain.
+    """
+    # Convert to float32 for FFT
+    img_float = image_gray.astype(np.float32)
+    
+    # Apply FFT
+    f_transform = np.fft.fft2(img_float)
+    f_shift = np.fft.fftshift(f_transform)
+    
+    # Get image dimensions
+    rows, cols = img_float.shape
+    crow, ccol = rows // 2, cols // 2
+    
+    # Create mask to zero out vertical frequencies
+    # Vertical streaks in spatial domain = horizontal lines in frequency domain
+    # We need to remove frequencies along the center row (horizontal line in freq domain)
+    mask = np.ones((rows, cols), dtype=np.float32)
+    
+    # Zero out a narrow horizontal band around center row in frequency domain
+    # This removes vertical periodic patterns (streaks) in spatial domain
+    horizontal_band_width = max(1, rows // 200)  # Adaptive width
+    start_row = max(0, crow - horizontal_band_width)
+    end_row = min(rows, crow + horizontal_band_width)
+    mask[start_row:end_row, :] = 0.0
+    
+    # Preserve DC component and very low frequencies to maintain overall structure
+    dc_keep_size = max(1, min(rows, cols) // 50)
+    mask[crow-dc_keep_size:crow+dc_keep_size, ccol-dc_keep_size:ccol+dc_keep_size] = 1.0
+    
+    # Apply mask
+    f_shift_filtered = f_shift * mask
+    
+    # Inverse FFT
+    f_ishift = np.fft.ifftshift(f_shift_filtered)
+    img_back = np.fft.ifft2(f_ishift)
+    img_back = np.real(img_back)
+    
+    # Normalize to valid range
+    img_back = np.clip(img_back, 0, 255).astype(np.uint8)
+    
+    return img_back
+
+
+def clean_background(background_rgb):
+    """
+    Clean background using median blur and FFT vertical streak removal.
+    """
+    # Step 1: Apply median blur to reduce noise
+    background_blurred = cv2.medianBlur(background_rgb, 7)
+    
+    # Step 2: Apply FFT vertical streak removal
+    # Convert to grayscale for FFT processing
+    background_gray = cv2.cvtColor(background_blurred, cv2.COLOR_RGB2GRAY)
+    
+    # Remove vertical streaks
+    background_gray_cleaned = remove_vertical_streaks_fft(background_gray)
+    
+    # Step 3: Combine FFT-cleaned grayscale back into 3-channel image
+    # Use the cleaned grayscale as luminance, preserve color from blurred version
+    # Convert blurred RGB to LAB color space
+    background_lab = cv2.cvtColor(background_blurred, cv2.COLOR_RGB2LAB)
+    
+    # Replace L channel with cleaned grayscale
+    background_lab[:, :, 0] = background_gray_cleaned
+    
+    # Convert back to RGB
+    background_cleaned = cv2.cvtColor(background_lab, cv2.COLOR_LAB2RGB)
+    
+    return background_cleaned
+
+
+def feather_mask(mask, kernel_size=61):
+    """
+    Apply Gaussian blur to mask for feathering effect.
+    Returns normalized mask (0.0 to 1.0).
+    """
+    mask_float = mask.astype(np.float32) / 255.0
+    mask_blurred = cv2.GaussianBlur(mask_float, (kernel_size, kernel_size), 0)
+    return mask_blurred
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Detect truck in X-ray image and generate pixel-perfect mask.'
+        description='Detect truck in X-ray image, generate mask, and clean background.'
     )
     parser.add_argument(
         '--image',
@@ -303,6 +394,32 @@ def main():
         default=0.8,
         help='Fraction of GPU memory to use (0.0-1.0, default: 0.8). Lower for 4GB GPUs.'
     )
+    parser.add_argument(
+        '--clean-background',
+        action='store_true',
+        help='Clean background outside mask (remove noise/streaks)'
+    )
+    parser.add_argument(
+        '--feather-kernel',
+        type=int,
+        default=61,
+        help='Gaussian blur kernel size for feathering mask edges (default: 61)'
+    )
+    parser.add_argument(
+        '--no-fft',
+        action='store_true',
+        help='Skip FFT vertical streak removal (only use median blur)'
+    )
+    parser.add_argument(
+        '--white-background',
+        action='store_true',
+        help='Set background outside mask to white (simple method)'
+    )
+    parser.add_argument(
+        '--invert-mask',
+        action='store_true',
+        help='Invert the mask (if truck appears as background)'
+    )
     
     args = parser.parse_args()
     
@@ -331,6 +448,11 @@ def main():
     
     print("=" * 60)
     print("Truck Mask Generator - X-ray Image Processing")
+    if args.clean_background:
+        if args.white_background:
+            print("Background cleaning: WHITE BACKGROUND")
+        else:
+            print("Background cleaning: NOISE REMOVAL")
     print("=" * 60)
     
     # Step 1: Load image
@@ -399,22 +521,93 @@ def main():
     if mask.shape[:2] != image_rgb.shape[:2]:
         mask = cv2.resize(mask, (image_rgb.shape[1], image_rgb.shape[0]), interpolation=cv2.INTER_NEAREST)
     
-    # Step 4: Save outputs
-    print("\n[Step 4] Saving output images...")
+    # Invert mask if requested (if truck appears as background)
+    if args.invert_mask:
+        print("\n⚠️  Inverting mask...")
+        mask = 255 - mask
     
-    # Convert mask to BGR for saving
-    mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    cv2.imwrite('mask.png', mask_bgr)
-    print("✓ mask.png saved")
-    
-    # Optionally save overlay visualization
-    if args.save_overlay:
-        # Create overlay: original image with mask highlighted
-        overlay = image_bgr.copy()
-        mask_colored = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
-        overlay = cv2.addWeighted(overlay, 0.7, mask_colored, 0.3, 0)
-        cv2.imwrite('mask_overlay.png', overlay)
-        print("✓ mask_overlay.png saved")
+    # Step 4: Extract truck region only
+    if args.clean_background:
+        print("\n[Step 4] Extracting truck region (removing everything outside mask)...")
+        
+        # Ensure mask is binary (0 or 255)
+        # 255 (white) = truck region (keep original image)
+        # 0 (black) = background (replace with white/black)
+        mask_binary = (mask > 127).astype(np.uint8) * 255
+        
+        # Verify mask has both regions
+        mask_pixels = np.sum(mask_binary > 0)
+        total_pixels = mask_binary.size
+        coverage = 100 * mask_pixels / total_pixels
+        print(f"Mask coverage: {mask_pixels}/{total_pixels} pixels ({coverage:.1f}%)")
+        
+        # Check if mask seems inverted (too much or too little coverage)
+        if coverage > 95:
+            print("⚠️  Warning: Mask covers >95% of image. It might be inverted!")
+        elif coverage < 5:
+            print("⚠️  Warning: Mask covers <5% of image. It might be inverted!")
+        
+        # Normalize mask: 1.0 where truck is (white/255), 0.0 where background is (black/0)
+        mask_normalized = (mask_binary.astype(np.float32) / 255.0)[:, :, np.newaxis]
+        
+        # Extract ONLY the truck region - everything inside the mask
+        # Everything outside mask becomes the background color
+        h, w = image_rgb.shape[:2]
+        
+        if args.white_background:
+            # Set background to white
+            print("\n[Step 5] Setting background outside mask to white...")
+            background_color = np.ones((h, w, 3), dtype=np.uint8) * 255
+        else:
+            # Set background to black
+            print("\n[Step 5] Setting background outside mask to black...")
+            background_color = np.zeros((h, w, 3), dtype=np.uint8)
+        
+        # Step 6: Combine - truck region (original) + background color (outside mask)
+        print("\n[Step 6] Creating final image (truck only)...")
+        
+        # Inside mask (mask_normalized = 1.0): original image pixels (truck)
+        # Outside mask (mask_normalized = 0.0): background color (white or black)
+        truck_region = image_rgb * mask_normalized
+        background_region = background_color * (1.0 - mask_normalized)
+        final = (truck_region + background_region).astype(np.uint8)
+        
+        # For saving background_cleaned, just show the background color
+        background_cleaned = background_color
+        
+        # Step 7: Save outputs
+        print("\n[Step 7] Saving output images...")
+        
+        # Convert to BGR for saving
+        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        background_cleaned_bgr = cv2.cvtColor(background_cleaned, cv2.COLOR_RGB2BGR)
+        final_bgr = cv2.cvtColor(final, cv2.COLOR_RGB2BGR)
+        
+        cv2.imwrite('mask.png', mask_bgr)
+        cv2.imwrite('background_cleaned.png', background_cleaned_bgr)
+        cv2.imwrite('final.png', final_bgr)
+        
+        print("✓ mask.png saved")
+        print("✓ background_cleaned.png saved")
+        print("✓ final.png saved (truck + cleaned background)")
+        
+    else:
+        # Step 4: Save outputs (mask only)
+        print("\n[Step 4] Saving output images...")
+        
+        # Convert mask to BGR for saving
+        mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+        cv2.imwrite('mask.png', mask_bgr)
+        print("✓ mask.png saved")
+        
+        # Optionally save overlay visualization
+        if args.save_overlay:
+            # Create overlay: original image with mask highlighted
+            overlay = image_bgr.copy()
+            mask_colored = cv2.applyColorMap(mask, cv2.COLORMAP_JET)
+            overlay = cv2.addWeighted(overlay, 0.7, mask_colored, 0.3, 0)
+            cv2.imwrite('mask_overlay.png', overlay)
+            print("✓ mask_overlay.png saved")
     
     print("\n" + "=" * 60)
     print("Processing complete!")
