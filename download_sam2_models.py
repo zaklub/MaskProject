@@ -74,29 +74,6 @@ def main():
         download_file(url, filename)
         print()
     
-    # Check if files already exist
-    if os.path.exists(model_filename):
-        response = input(f"{model_filename} already exists. Overwrite? (y/n): ")
-        if response.lower() != 'y':
-            print(f"Skipping {model_filename}")
-        else:
-            os.remove(model_filename)
-            download_file(model_url, model_filename)
-    else:
-        download_file(model_url, model_filename)
-    
-    print()
-    
-    if os.path.exists(config_filename):
-        response = input(f"{config_filename} already exists. Overwrite? (y/n): ")
-        if response.lower() != 'y':
-            print(f"Skipping {config_filename}")
-        else:
-            os.remove(config_filename)
-            download_file(config_url, config_filename)
-    else:
-        download_file(config_url, config_filename)
-    
     print("=" * 60)
     print("Download complete!")
     print("=" * 60)
